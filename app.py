@@ -261,8 +261,9 @@ def ocr():
             deaths = extract_number(deaths_texts)
 
             # KD
-            kd = 0
-            if deaths > 0:
+            if deaths == 0:
+                kd = float(kills)
+            else:
                 kd = round(kills / deaths, 2)
 
             player = {
