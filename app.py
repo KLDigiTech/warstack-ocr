@@ -15,216 +15,85 @@ CORS(app)
 reader = easyocr.Reader(['en'], gpu=False)
 
 # =====================================================
-# PREPROCESS IMAGE
+# HELPERS
 # =====================================================
 
-def preprocess_image(img):
+def upscale(img, scale=3):
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    gray = cv2.resize(
-        gray,
+    return cv2.resize(
+        img,
         None,
-        fx=3,
-        fy=3,
+        fx=scale,
+        fy=scale,
         interpolation=cv2.INTER_CUBIC
     )
 
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+# =====================================================
+# PREPROCESS TEXT
+# =====================================================
 
-    thresh = cv2.adaptiveThreshold(
+def preprocess_text(img):
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    gray = upscale(gray, 3)
+
+    gray = cv2.GaussianBlur(gray, (3,3), 0)
+
+    return gray
+
+# =====================================================
+# PREPROCESS NUMBERS
+# =====================================================
+
+def preprocess_numbers(img):
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    gray = upscale(gray, 4)
+
+    thresh = cv2.threshold(
         gray,
+        170,
         255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        11,
-        2
-    )
+        cv2.THRESH_BINARY
+    )[1]
 
     return thresh
 
 # =====================================================
-# OCR TEXT EXTRACTION
+# OCR TEXT
 # =====================================================
 
-def extract_text(image):
+def read_text(img):
 
-    results = reader.readtext(image)
-
-    texts = []
-
-    for result in results:
-
-        text = result[1]
-        confidence = result[2]
-
-        if confidence > 0.25:
-
-            texts.append(text)
-
-    return texts
-
-# =====================================================
-# PARSE SCOREBOARD
-# =====================================================
-
-def parse_scoreboard(texts):
-
-    full_text = "\n".join(texts)
-
-    placement = None
-    squad_kills = None
-
-    # =================================================
-    # PLACEMENT
-    # =================================================
-
-    placement_match = re.search(
-        r'(\d+)\s*(PLACE|PLACEMENT|PLACEMENT DE LESCOUADE)',
-        full_text,
-        re.IGNORECASE
+    results = reader.readtext(
+        img,
+        detail=0
     )
 
-    if placement_match:
+    return " ".join(results).strip()
 
-        placement = int(placement_match.group(1))
+# =====================================================
+# OCR NUMBER
+# =====================================================
 
-    # =================================================
-    # KILLS ESCOUADE
-    # =================================================
+def read_number(img):
 
-    big_numbers = re.findall(r'\b\d+\b', full_text)
-
-    if big_numbers:
-
-        numbers = [int(x) for x in big_numbers]
-
-        filtered = [
-            n for n in numbers
-            if 0 <= n <= 200
-        ]
-
-        if filtered:
-
-            filtered.sort()
-
-            squad_kills = (
-                filtered[-2]
-                if len(filtered) > 1
-                else filtered[0]
-            )
-
-    # =================================================
-    # PLAYERS
-    # =================================================
-
-    players = []
-
-    pseudo_regex = re.compile(
-        r'^[A-Za-z0-9_\-\[\]]{3,24}$'
+    results = reader.readtext(
+        img,
+        detail=0,
+        allowlist='0123456789'
     )
 
-    ignored_words = [
-        'resultat',
-        'vous',
-        'placement',
-        'progression',
-        'escouade',
-        'score',
-        'kills'
-    ]
+    text = ''.join(results)
 
-    for i, text in enumerate(texts):
+    nums = re.findall(r'\d+', text)
 
-        clean = text.strip()
+    if nums:
+        return int(nums[0])
 
-        # =========================
-        # IGNORE UI WORDS
-        # =========================
-
-        if clean.lower() in ignored_words:
-            continue
-
-        # =========================
-        # DETECT PSEUDO
-        # =========================
-
-        if pseudo_regex.match(clean):
-
-            stats = []
-
-            for j in range(i + 1, min(i + 6, len(texts))):
-
-                nums = re.findall(r'\d+', texts[j])
-
-                for n in nums:
-
-                    stats.append(int(n))
-
-            player = {
-
-                "pseudo": clean,
-
-                "kills": (
-                    stats[0]
-                    if len(stats) > 0
-                    else 0
-                ),
-
-                "deaths": (
-                    stats[1]
-                    if len(stats) > 1
-                    else 0
-                ),
-
-                "score": (
-                    stats[2]
-                    if len(stats) > 2
-                    else 0
-                )
-
-            }
-
-            # =====================
-            # KD
-            # =====================
-
-            if player["deaths"] > 0:
-
-                player["kd"] = round(
-                    player["kills"] / player["deaths"],
-                    2
-                )
-
-            else:
-
-                player["kd"] = player["kills"]
-
-            players.append(player)
-
-    # =================================================
-    # LIMIT PLAYERS
-    # =================================================
-
-    players = players[:4]
-
-    # =================================================
-    # RETURN JSON
-    # =================================================
-
-    return {
-
-        "success": True,
-
-        "placement": placement,
-
-        "squad_kills": squad_kills,
-
-        "players": players,
-
-        "raw_text": texts
-
-    }
+    return 0
 
 # =====================================================
 # OCR ROUTE
@@ -236,23 +105,17 @@ def ocr():
     try:
 
         # =============================================
-        # CHECK FILE
+        # CHECK IMAGE
         # =============================================
 
         if 'image' not in request.files:
 
             return jsonify({
-
                 "success": False,
-                "error": "Aucune image"
-
+                "error": "No image"
             }), 400
 
         file = request.files['image']
-
-        # =============================================
-        # READ IMAGE
-        # =============================================
 
         image_bytes = np.frombuffer(
             file.read(),
@@ -267,66 +130,190 @@ def ocr():
         if img is None:
 
             return jsonify({
-
                 "success": False,
-                "error": "Image invalide"
-
+                "error": "Invalid image"
             }), 400
 
         # =============================================
-        # IMAGE ZONES
+        # IMAGE SIZE
         # =============================================
 
         h, w = img.shape[:2]
 
+        # =============================================
+        # PLACEMENT
+        # =============================================
+
         placement_zone = img[
-            0:int(h * 0.30),
-            0:w
+            int(h * 0.10):int(h * 0.28),
+            int(w * 0.28):int(w * 0.72)
         ]
 
-        players_zone = img[
-            int(h * 0.45):h,
-            0:w
+        placement_text = read_text(
+            preprocess_text(placement_zone)
+        )
+
+        placement = None
+
+        placement_match = re.search(
+            r'(\d+)',
+            placement_text
+        )
+
+        if placement_match:
+
+            placement = int(
+                placement_match.group(1)
+            )
+
+        # =============================================
+        # TEAM KILLS
+        # =============================================
+
+        kills_zone = img[
+            int(h * 0.30):int(h * 0.47),
+            int(w * 0.28):int(w * 0.48)
+        ]
+
+        squad_kills = read_number(
+            preprocess_numbers(kills_zone)
+        )
+
+        # =============================================
+        # PLAYERS
+        # =============================================
+
+        players = []
+
+        player_zones = [
+
+            # PLAYER 1
+            {
+                "name": [
+                    int(h * 0.60),
+                    int(h * 0.68),
+                    int(w * 0.03),
+                    int(w * 0.20)
+                ],
+                "kills": [
+                    int(h * 0.70),
+                    int(h * 0.80),
+                    int(w * 0.08),
+                    int(w * 0.18)
+                ]
+            },
+
+            # PLAYER 2
+            {
+                "name": [
+                    int(h * 0.60),
+                    int(h * 0.68),
+                    int(w * 0.28),
+                    int(w * 0.45)
+                ],
+                "kills": [
+                    int(h * 0.70),
+                    int(h * 0.80),
+                    int(w * 0.32),
+                    int(w * 0.42)
+                ]
+            },
+
+            # PLAYER 3
+            {
+                "name": [
+                    int(h * 0.60),
+                    int(h * 0.68),
+                    int(w * 0.52),
+                    int(w * 0.69)
+                ],
+                "kills": [
+                    int(h * 0.70),
+                    int(h * 0.80),
+                    int(w * 0.56),
+                    int(w * 0.66)
+                ]
+            },
+
+            # PLAYER 4
+            {
+                "name": [
+                    int(h * 0.60),
+                    int(h * 0.68),
+                    int(w * 0.75),
+                    int(w * 0.93)
+                ],
+                "kills": [
+                    int(h * 0.70),
+                    int(h * 0.80),
+                    int(w * 0.79),
+                    int(w * 0.89)
+                ]
+            }
+
         ]
 
         # =============================================
-        # PREPROCESS
+        # OCR PLAYERS
         # =============================================
 
-        placement_processed = preprocess_image(
-            placement_zone
-        )
+        for zone in player_zones:
 
-        players_processed = preprocess_image(
-            players_zone
-        )
+            # =========================================
+            # NAME
+            # =========================================
+
+            y1, y2, x1, x2 = zone["name"]
+
+            name_crop = img[y1:y2, x1:x2]
+
+            pseudo = read_text(
+                preprocess_text(name_crop)
+            )
+
+            pseudo = pseudo.replace(' ', '')
+
+            # =========================================
+            # KILLS
+            # =========================================
+
+            y1, y2, x1, x2 = zone["kills"]
+
+            kills_crop = img[y1:y2, x1:x2]
+
+            kills = read_number(
+                preprocess_numbers(kills_crop)
+            )
+
+            # =========================================
+            # CLEAN
+            # =========================================
+
+            if len(pseudo) < 2:
+                continue
+
+            players.append({
+
+                "pseudo": pseudo,
+                "kills": kills
+
+            })
 
         # =============================================
-        # OCR
+        # RETURN
         # =============================================
 
-        placement_texts = extract_text(
-            placement_processed
-        )
+        return jsonify({
 
-        players_texts = extract_text(
-            players_processed
-        )
+            "success": True,
 
-        all_texts = (
-            placement_texts +
-            players_texts
-        )
+            "placement": placement,
 
-        # =============================================
-        # PARSE
-        # =============================================
+            "squad_kills": squad_kills,
 
-        result = parse_scoreboard(
-            all_texts
-        )
+            "players": players
 
-        return jsonify(result)
+        })
 
     except Exception as e:
 
