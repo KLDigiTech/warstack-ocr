@@ -1,131 +1,261 @@
-import os
-import re
-import base64
-import cv2
-import pytesseract
-import numpy as np
-from PIL import Image
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
-from io import BytesIO
+import cv2
+import numpy as np
+import easyocr
+import re
 
 app = Flask(__name__)
 CORS(app)
 
+reader = easyocr.Reader(['en'], gpu=False)
+
+# =====================================================
+# PREPROCESS
+# =====================================================
+
 def preprocess_image(img):
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    scaled = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    _, thresh = cv2.threshold(scaled, 150, 255, cv2.THRESH_BINARY)
+
+    gray = cv2.resize(
+        gray,
+        None,
+        fx=3,
+        fy=3,
+        interpolation=cv2.INTER_CUBIC
+    )
+
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    thresh = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11,
+        2
+    )
+
     return thresh
 
-def extract_stats(text):
-    stats = {
-        'placement'  : None,
-        'squad_kills': None,
-        'players'    : [],
+# =====================================================
+# OCR
+# =====================================================
+
+def extract_text(image):
+
+    results = reader.readtext(image)
+
+    texts = []
+
+    for result in results:
+
+        text = result[1]
+        confidence = result[2]
+
+        if confidence > 0.25:
+            texts.append(text)
+
+    return texts
+
+# =====================================================
+# PARSE
+# =====================================================
+
+def parse_scoreboard(texts):
+
+    full_text = "\n".join(texts)
+
+    placement = None
+    squad_kills = None
+
+    # =========================
+    # PLACEMENT
+    # =========================
+
+    placement_match = re.search(
+        r'(\d+)\s*(PLACE|PLACEMENT)',
+        full_text,
+        re.IGNORECASE
+    )
+
+    if placement_match:
+        placement = int(placement_match.group(1))
+
+    # =========================
+    # KILLS
+    # =========================
+
+    big_numbers = re.findall(r'\b\d+\b', full_text)
+
+    if big_numbers:
+
+        numbers = [int(x) for x in big_numbers]
+
+        filtered = [
+            n for n in numbers
+            if 0 <= n <= 200
+        ]
+
+        if filtered:
+            squad_kills = max(filtered)
+
+    # =========================
+    # PLAYERS
+    # =========================
+
+    players = []
+
+    pseudo_regex = re.compile(
+        r'^[A-Za-z0-9_\-\[\]]{3,24}$'
+    )
+
+    for i, text in enumerate(texts):
+
+        clean = text.strip()
+
+        if pseudo_regex.match(clean):
+
+            stats = []
+
+            for j in range(i + 1, min(i + 6, len(texts))):
+
+                nums = re.findall(r'\d+', texts[j])
+
+                for n in nums:
+                    stats.append(int(n))
+
+            player = {
+                "pseudo": clean,
+                "kills": stats[0] if len(stats) > 0 else 0,
+                "deaths": stats[1] if len(stats) > 1 else 0,
+                "score": stats[2] if len(stats) > 2 else 0,
+            }
+
+            if player["deaths"] > 0:
+
+                player["kd"] = round(
+                    player["kills"] / player["deaths"],
+                    2
+                )
+
+            else:
+
+                player["kd"] = player["kills"]
+
+            players.append(player)
+
+    players = players[:4]
+
+    return {
+        "success": True,
+        "placement": placement,
+        "squad_kills": squad_kills,
+        "players": players,
+        "raw_text": texts
     }
 
-    lines = text.split('\n')
-    lines_clean = [l.strip() for l in lines if l.strip()]
-    full_text = ' '.join(lines_clean)
-
-    # Placement
-    place_match = re.search(r'(\d+)[Ee]\s*PLACE', full_text, re.IGNORECASE)
-    if place_match:
-        stats['placement'] = int(place_match.group(1))
-
-    # Kills escouade
-    elim_match = re.search(r'ELIMINATIONS CONFIRMEES\D*(\d+)', full_text)
-    if elim_match:
-        stats['squad_kills'] = int(elim_match.group(1))
-
-    # Ligne stats numériques — kills score deaths assists x4
-    # Ex: "7 715 3 5 10 505 8 1 9 935 8 1 9 100 2 3"
-    stats_nums = None
-    for line in lines_clean:
-        nums = re.findall(r'\b(\d+)\b', line)
-        if len(nums) >= 12:
-            stats_nums = [int(n) for n in nums]
-            break
-
-    # Pseudos — ligne avec noms joueurs
-    # Ex: "Inoxydable 188 Classifie 470 Sanguinaire 188 Sans limites 281"
-    pseudo_scores = []
-    for line in lines_clean:
-        # Cherche pattern: mot(s) suivi d'un nombre 3-4 chiffres, répété
-        matches = re.findall(r'([A-Za-z][A-Za-z0-9_ ]{1,20}?)\s+(\d{3,4})\b', line)
-        if len(matches) >= 3:
-            pseudo_scores = [(m[0].strip(), int(m[1])) for m in matches[:4]]
-            break
-
-    # Construit les 4 joueurs
-    players = []
-    if stats_nums:
-        for i in range(4):
-            base = i * 4
-            if base + 2 < len(stats_nums):
-                pseudo = pseudo_scores[i][0] if i < len(pseudo_scores) else f'Joueur {i+1}'
-                score  = pseudo_scores[i][1] if i < len(pseudo_scores) else stats_nums[base + 1]
-                kills  = stats_nums[base]
-                deaths = stats_nums[base + 2]
-                players.append({
-                    'pseudo' : pseudo,
-                    'kills'  : kills,
-                    'score'  : score,
-                    'deaths' : deaths,
-                    'kd'     : round(kills / max(deaths, 1), 2)
-                })
-
-    stats['players'] = players
-    return stats
-
-def load_image_from_url(url):
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    img_array = np.frombuffer(response.content, np.uint8)
-    return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
-def load_image_from_base64(b64_string):
-    img_data = base64.b64decode(b64_string)
-    img_array = np.frombuffer(img_data, np.uint8)
-    return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({ 'status': 'ok' })
+# =====================================================
+# ROUTE OCR
+# =====================================================
 
 @app.route('/ocr', methods=['POST'])
 def ocr():
+
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({ 'error': 'Body JSON manquant' }), 400
 
-        image_url    = data.get('image_url')
-        image_base64 = data.get('image_base64')
+        if 'image' not in request.files:
 
-        if not image_url and not image_base64:
-            return jsonify({ 'error': 'image_url ou image_base64 requis' }), 400
+            return jsonify({
+                "success": False,
+                "error": "Aucune image"
+            }), 400
 
-        if image_base64:
-            img = load_image_from_base64(image_base64)
-        else:
-            img = load_image_from_url(image_url)
+        file = request.files['image']
+
+        image_bytes = np.frombuffer(
+            file.read(),
+            np.uint8
+        )
+
+        img = cv2.imdecode(
+            image_bytes,
+            cv2.IMREAD_COLOR
+        )
 
         if img is None:
-            return jsonify({ 'error': 'Image invalide ou non décodable' }), 400
 
-        processed = preprocess_image(img)
-        text = pytesseract.image_to_string(processed, config='--psm 6')
+            return jsonify({
+                "success": False,
+                "error": "Image invalide"
+            }), 400
 
-        stats = extract_stats(text)
-        stats['raw_text'] = text.strip()
+        # =========================
+        # ZONES
+        # =========================
 
-        return jsonify({ 'success': True, **stats })
+        h, w = img.shape[:2]
+
+        placement_zone = img[
+            0:int(h * 0.30),
+            0:w
+        ]
+
+        players_zone = img[
+            int(h * 0.45):h,
+            0:w
+        ]
+
+        # =========================
+        # PREPROCESS
+        # =========================
+
+        placement_processed = preprocess_image(
+            placement_zone
+        )
+
+        players_processed = preprocess_image(
+            players_zone
+        )
+
+        # =========================
+        # OCR
+        # =========================
+
+        placement_texts = extract_text(
+            placement_processed
+        )
+
+        players_texts = extract_text(
+            players_processed
+        )
+
+        all_texts = placement_texts + players_texts
+
+        # =========================
+        # PARSE
+        # =========================
+
+        result = parse_scoreboard(all_texts)
+
+        return jsonify(result)
 
     except Exception as e:
-        return jsonify({ 'error': str(e) }), 500
+
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+# =====================================================
+# START
+# =====================================================
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=7860)
+
+    app.run(
+    host='0.0.0.0',
+    port=7860,
+    debug=True
+)
