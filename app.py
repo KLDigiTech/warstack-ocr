@@ -56,11 +56,17 @@ def preprocess_numbers(img):
         cv2.COLOR_BGR2GRAY
     )
 
-    gray = upscale(gray, 6)
+    gray = upscale(gray, 10)
+
+    gray = cv2.GaussianBlur(
+        gray,
+        (3,3),
+        0
+    )
 
     thresh = cv2.threshold(
         gray,
-        190,
+        210,
         255,
         cv2.THRESH_BINARY
     )[1]
@@ -120,7 +126,9 @@ def read_number(img):
 
 @app.route('/ocr', methods=['POST'])
 def ocr():
-    print("NEW OCR VERSION ACTIVE")
+
+    print("WARSTACK OCR ACTIVE")
+
     try:
 
         if 'image' not in request.files:
@@ -205,13 +213,13 @@ def ocr():
 
         ]
 
-        for col in player_columns:
+        for index, col in enumerate(player_columns):
 
             x1 = int(w * col[0])
             x2 = int(w * col[1])
 
             # =============================================
-            # NAME ZONE
+            # NAME
             # =============================================
 
             name_crop = img[
@@ -226,12 +234,12 @@ def ocr():
             pseudo = pseudo.replace(' ', '')
 
             # =============================================
-            # KILLS ZONE
+            # KILLS
             # =============================================
 
             kills_crop = img[
-                int(h * 0.71):int(h * 0.77),
-                x1 + 40:x1 + 120
+                int(h * 0.695):int(h * 0.745),
+                x1 + 58:x1 + 95
             ]
 
             kills = read_number(
@@ -239,7 +247,21 @@ def ocr():
             )
 
             # =============================================
-            # CLEAN PSEUDO
+            # DEBUG IMAGES
+            # =============================================
+
+            cv2.imwrite(
+                f"debug_name_{index}.png",
+                name_crop
+            )
+
+            cv2.imwrite(
+                f"debug_kills_{index}.png",
+                kills_crop
+            )
+
+            # =============================================
+            # CLEAN
             # =============================================
 
             pseudo = re.sub(
@@ -257,6 +279,11 @@ def ocr():
                 "kills": kills
 
             })
+
+        cv2.imwrite(
+            "debug_teamkills.png",
+            kills_zone
+        )
 
         return jsonify({
 
