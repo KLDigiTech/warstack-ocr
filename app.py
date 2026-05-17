@@ -170,34 +170,61 @@ def ocr():
         player_zones = [
 
             (
-                int(w * 0.03),
+                int(w * 0.01),
                 int(h * 0.56),
-                int(w * 0.23),
+                int(w * 0.24),
                 int(h * 0.78)
             ),
 
             (
-                int(w * 0.27),
+                int(w * 0.24),
                 int(h * 0.56),
-                int(w * 0.47),
+                int(w * 0.49),
                 int(h * 0.78)
             ),
 
             (
-                int(w * 0.51),
+                int(w * 0.48),
                 int(h * 0.56),
-                int(w * 0.71),
+                int(w * 0.73),
                 int(h * 0.78)
             ),
 
             (
-                int(w * 0.75),
+                int(w * 0.72),
                 int(h * 0.56),
-                int(w * 0.95),
+                int(w * 0.98),
                 int(h * 0.78)
             )
 
         ]
+
+        # =================================================
+        # DEBUG RECTANGLES
+        # =================================================
+
+        debug_img = img.copy()
+
+        for zone in player_zones:
+
+            x1, y1, x2, y2 = zone
+
+            cv2.rectangle(
+                debug_img,
+                (x1, y1),
+                (x2, y2),
+                (0, 255, 0),
+                4
+            )
+
+        cv2.imwrite(
+            "debug_players.jpg",
+            debug_img
+        )
+
+        # =================================================
+        # PLAYER OCR
+        # =================================================
 
         for index, zone in enumerate(player_zones):
 
@@ -239,7 +266,7 @@ def ocr():
                     text
                 )
 
-                if len(clean) >= 3:
+                if len(clean) >= 3 and clean.lower() != "vous":
 
                     pseudo = clean
                     break
@@ -250,7 +277,10 @@ def ocr():
 
             for text in results:
 
-                nums = re.findall(r'\d+', text)
+                nums = re.findall(
+                    r'\d+',
+                    text
+                )
 
                 if nums:
 
