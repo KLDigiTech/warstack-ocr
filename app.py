@@ -6,10 +6,12 @@ import pytesseract
 import numpy as np
 from PIL import Image
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import requests
 from io import BytesIO
 
 app = Flask(__name__)
+CORS(app)
 
 def preprocess_image(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -25,24 +27,39 @@ def extract_stats(text):
         'kd'     : None,
     }
 
-    lines = text.lower().split('\n')
+    lines = text.split('\n')
     lines = [l.strip() for l in lines if l.strip()]
 
-    for line in lines:
-        if 'kill' in line or 'élimin' in line:
-            numbers = re.findall(r'\d+', line)
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+
+        # Kills — BF FR
+        if any(k in line_lower for k in ['elimination', 'élimination', 'confirmee', 'confirmées']):
+            numbers = re.findall(r'\b(\d{1,3})\b', line)
             if numbers and stats['kills'] is None:
                 stats['kills'] = int(numbers[0])
 
-        if 'death' in line or 'mort' in line:
-            numbers = re.findall(r'\d+', line)
+        # Deaths
+        if any(k in line_lower for k in ['death', 'mort', 'decede', 'décédé']):
+            numbers = re.findall(r'\b(\d{1,3})\b', line)
             if numbers and stats['deaths'] is None:
                 stats['deaths'] = int(numbers[0])
 
-        if 'score' in line:
-            numbers = re.findall(r'\d+', line)
+        # Score
+        if 'score' in line_lower:
+            numbers = re.findall(r'\b(\d+)\b', line)
             if numbers and stats['score'] is None:
                 stats['score'] = int(numbers[0])
+
+    # Fallback kills — cherche grands nombres isolés dans les premières lignes
+    if stats['kills'] is None:
+        for line in lines[:15]:
+            numbers = re.findall(r'\b(\d{1,3})\b', line)
+            if numbers:
+                for n in numbers:
+                    if 1 <= int(n) <= 100 and stats['kills'] is None:
+                        stats['kills'] = int(n)
+                        break
 
     if stats['kills'] is not None and stats['deaths'] is not None:
         deaths = stats['deaths'] if stats['deaths'] > 0 else 1
@@ -78,7 +95,6 @@ def ocr():
         if not image_url and not image_base64:
             return jsonify({ 'error': 'image_url ou image_base64 requis' }), 400
 
-        # Chargement de l'image
         if image_base64:
             img = load_image_from_base64(image_base64)
         else:
@@ -87,15 +103,12 @@ def ocr():
         if img is None:
             return jsonify({ 'error': 'Image invalide ou non décodable' }), 400
 
-        # Prétraitement + OCR
         processed = preprocess_image(img)
         text = pytesseract.image_to_string(processed, config='--psm 6')
 
-        # Extraction des stats
         stats = extract_stats(text)
         stats['raw_text'] = text.strip()
 
-        # Réponse aplatie (kills, deaths, kd, score, raw_text à la racine)
         return jsonify({ 'success': True, **stats })
 
     except Exception as e:
