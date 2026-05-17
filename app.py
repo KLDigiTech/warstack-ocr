@@ -109,8 +109,8 @@ def ocr():
         # =================================================
 
         placement_crop = img[
-            int(h * 0.10):int(h * 0.24),
-            int(w * 0.32):int(w * 0.68)
+            int(h * 0.08):int(h * 0.20),
+            int(w * 0.38):int(w * 0.62)
         ]
 
         placement_small = cv2.resize(
@@ -144,8 +144,8 @@ def ocr():
         # =================================================
 
         kills_crop = img[
-            int(h * 0.27):int(h * 0.39),
-            int(w * 0.27):int(w * 0.42)
+            int(h * 0.23):int(h * 0.37),
+            int(w * 0.23):int(w * 0.40)
         ]
 
         kills_small = cv2.resize(
