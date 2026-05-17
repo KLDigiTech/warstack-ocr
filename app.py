@@ -9,73 +9,13 @@ app = Flask(__name__)
 CORS(app)
 
 # =====================================================
-# OCR MODEL
+# EASY OCR
 # =====================================================
 
-reader = easyocr.Reader(['en'], gpu=False)
-
-# =====================================================
-# UPSCALE
-# =====================================================
-
-def upscale(img, scale=4):
-
-    return cv2.resize(
-        img,
-        None,
-        fx=scale,
-        fy=scale,
-        interpolation=cv2.INTER_CUBIC
-    )
-
-# =====================================================
-# PREPROCESS TEXT
-# =====================================================
-
-def preprocess_text(img):
-
-    gray = cv2.cvtColor(
-        img,
-        cv2.COLOR_BGR2GRAY
-    )
-
-    gray = upscale(gray, 3)
-
-    gray = cv2.GaussianBlur(
-        gray,
-        (3, 3),
-        0
-    )
-
-    return gray
-
-# =====================================================
-# PREPROCESS NUMBERS
-# =====================================================
-
-def preprocess_numbers(img):
-
-    gray = cv2.cvtColor(
-        img,
-        cv2.COLOR_BGR2GRAY
-    )
-
-    gray = upscale(gray, 8)
-
-    gray = cv2.GaussianBlur(
-        gray,
-        (3, 3),
-        0
-    )
-
-    thresh = cv2.threshold(
-        gray,
-        210,
-        255,
-        cv2.THRESH_BINARY
-    )[1]
-
-    return thresh
+reader = easyocr.Reader(
+    ['en'],
+    gpu=False
+)
 
 # =====================================================
 # READ TEXT
@@ -85,12 +25,12 @@ def read_text(img):
 
     results = reader.readtext(
         img,
-        detail=0
+        detail=0,
+        paragraph=False,
+        batch_size=1
     )
 
-    text = ''.join(results)
-
-    return text.strip()
+    return ' '.join(results)
 
 # =====================================================
 # READ NUMBER
@@ -101,6 +41,8 @@ def read_number(img):
     results = reader.readtext(
         img,
         detail=0,
+        paragraph=False,
+        batch_size=1,
         allowlist='0123456789'
     )
 
@@ -110,19 +52,10 @@ def read_number(img):
 
     if nums:
 
-        values = [int(n) for n in nums]
-
-        valid = []
-
-        for v in values:
-
-            if v <= 100:
-
-                valid.append(v)
-
-        if valid:
-
-            return max(valid)
+        try:
+            return int(nums[0])
+        except:
+            return 0
 
     return 0
 
@@ -133,12 +66,12 @@ def read_number(img):
 @app.route('/ocr', methods=['POST'])
 def ocr():
 
-    print("WARSTACK OCR ACTIVE")
-
     try:
 
+        print("WARSTACK OCR START")
+
         # =================================================
-        # CHECK IMAGE
+        # IMAGE
         # =================================================
 
         if 'image' not in request.files:
@@ -169,22 +102,29 @@ def ocr():
 
         h, w = img.shape[:2]
 
+        print(f"IMAGE SIZE {w}x{h}")
+
         # =================================================
         # PLACEMENT
         # =================================================
 
-        placement_zone = img[
-            int(h * 0.10):int(h * 0.28),
-            int(w * 0.30):int(w * 0.70)
+        placement_crop = img[
+            int(h * 0.10):int(h * 0.24),
+            int(w * 0.32):int(w * 0.68)
         ]
 
-        placement_processed = preprocess_text(
-            placement_zone
+        placement_small = cv2.resize(
+            placement_crop,
+            (0, 0),
+            fx=0.5,
+            fy=0.5
         )
 
         placement_text = read_text(
-            placement_processed
+            placement_small
         )
+
+        print("PLACEMENT TEXT:", placement_text)
 
         placement = 0
 
@@ -203,18 +143,23 @@ def ocr():
         # TEAM KILLS
         # =================================================
 
-        kills_zone = img[
-            int(h * 0.28):int(h * 0.40),
-            int(w * 0.28):int(w * 0.42)
+        kills_crop = img[
+            int(h * 0.27):int(h * 0.39),
+            int(w * 0.27):int(w * 0.42)
         ]
 
-        kills_processed = preprocess_numbers(
-            kills_zone
+        kills_small = cv2.resize(
+            kills_crop,
+            (0, 0),
+            fx=0.5,
+            fy=0.5
         )
 
         squad_kills = read_number(
-            kills_processed
+            kills_small
         )
+
+        print("SQUAD KILLS:", squad_kills)
 
         # =================================================
         # PLAYERS
@@ -224,52 +169,59 @@ def ocr():
 
         player_zones = [
 
-            # PLAYER 1
             (
                 int(w * 0.03),
-                int(h * 0.58),
+                int(h * 0.56),
                 int(w * 0.23),
                 int(h * 0.78)
             ),
 
-            # PLAYER 2
             (
                 int(w * 0.27),
-                int(h * 0.58),
+                int(h * 0.56),
                 int(w * 0.47),
                 int(h * 0.78)
             ),
 
-            # PLAYER 3
             (
                 int(w * 0.51),
-                int(h * 0.58),
+                int(h * 0.56),
                 int(w * 0.71),
                 int(h * 0.78)
             ),
 
-            # PLAYER 4
             (
                 int(w * 0.75),
-                int(h * 0.58),
+                int(h * 0.56),
                 int(w * 0.95),
                 int(h * 0.78)
             )
 
         ]
 
-        for zone in player_zones:
+        for index, zone in enumerate(player_zones):
+
+            print(f"PLAYER {index + 1}")
 
             x1, y1, x2, y2 = zone
 
             crop = img[y1:y2, x1:x2]
 
-            processed = preprocess_text(crop)
+            small = cv2.resize(
+                crop,
+                (0, 0),
+                fx=0.5,
+                fy=0.5
+            )
 
             results = reader.readtext(
-                processed,
-                detail=0
+                small,
+                detail=0,
+                paragraph=False,
+                batch_size=1
             )
+
+            print(results)
 
             pseudo = "UNKNOWN"
 
@@ -279,15 +231,18 @@ def ocr():
             # PSEUDO
             # =============================================
 
-            if len(results) > 0:
+            for text in results:
 
-                pseudo = results[0]
-
-                pseudo = re.sub(
+                clean = re.sub(
                     r'[^A-Za-z0-9_\-]',
                     '',
-                    pseudo
+                    text
                 )
+
+                if len(clean) >= 3:
+
+                    pseudo = clean
+                    break
 
             # =============================================
             # KILLS
@@ -295,10 +250,7 @@ def ocr():
 
             for text in results:
 
-                nums = re.findall(
-                    r'\d+',
-                    text
-                )
+                nums = re.findall(r'\d+', text)
 
                 if nums:
 
@@ -307,55 +259,45 @@ def ocr():
                     if value <= 50:
 
                         kills = value
-
                         break
 
-            # =============================================
-            # SAVE PLAYER
-            # =============================================
+            players.append({
 
-            if len(pseudo) >= 3:
+                "pseudo": pseudo,
+                "kills": kills,
+                "deaths": 0,
+                "kd": 0,
+                "score": 0
 
-                players.append({
-
-                    "pseudo": pseudo,
-
-                    "kills": kills,
-
-                    "deaths": 0,
-
-                    "kd": 0,
-
-                    "score": 0
-
-                })
+            })
 
         # =================================================
-        # RETURN
+        # RESPONSE
         # =================================================
 
-        return jsonify({
+        response = {
 
             "success": True,
 
             "placement": placement,
 
-            "placement_text": placement_text,
-
             "squad_kills": squad_kills,
 
             "players": players
 
-        })
+        }
+
+        print(response)
+
+        return jsonify(response)
 
     except Exception as e:
 
-        print(e)
+        print("OCR ERROR:", str(e))
 
         return jsonify({
 
             "success": False,
-
             "error": str(e)
 
         }), 500
