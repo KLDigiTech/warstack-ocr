@@ -1,348 +1,173 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS
-import cv2
-import numpy as np
+from PIL import Image
 import easyocr
-import re
+import numpy as np
+import cv2
+import os
+import uuid
 
 app = Flask(__name__)
-CORS(app)
 
-# =====================================================
-# EASY OCR
-# =====================================================
+reader = easyocr.Reader(['en'], gpu=False)
 
-reader = easyocr.Reader(
-    ['en'],
-    gpu=False
-)
+DEBUG_DIR = "debug"
+os.makedirs(DEBUG_DIR, exist_ok=True)
 
-# =====================================================
-# READ TEXT
-# =====================================================
+@app.route("/")
+def home():
+    return "WARSTACK OCR ONLINE"
 
-def read_text(img):
-
-    results = reader.readtext(
-        img,
-        detail=0,
-        paragraph=False,
-        batch_size=1
-    )
-
-    return ' '.join(results)
-
-# =====================================================
-# READ NUMBER
-# =====================================================
-
-def read_number(img):
-
-    results = reader.readtext(
-        img,
-        detail=0,
-        paragraph=False,
-        batch_size=1,
-        allowlist='0123456789'
-    )
-
-    text = ''.join(results)
-
-    nums = re.findall(r'\d+', text)
-
-    if nums:
-
-        try:
-            return int(nums[0])
-        except:
-            return 0
-
-    return 0
-
-# =====================================================
-# OCR ROUTE
-# =====================================================
-
-@app.route('/ocr', methods=['POST'])
+@app.route("/ocr", methods=["POST"])
 def ocr():
 
-    try:
+    print("\n========================", flush=True)
+    print("WARSTACK OCR START", flush=True)
+    print("========================", flush=True)
 
-        print("WARSTACK OCR START")
+    if "image" not in request.files:
+        return jsonify({
+            "success": False,
+            "error": "No image"
+        })
 
-        # =================================================
-        # IMAGE
-        # =================================================
+    file = request.files["image"]
 
-        if 'image' not in request.files:
+    image = Image.open(file.stream).convert("RGB")
+    image_np = np.array(image)
 
-            return jsonify({
-                "success": False,
-                "error": "No image"
-            }), 400
+    h, w = image_np.shape[:2]
 
-        file = request.files['image']
+    print(f"IMAGE SIZE: {w}x{h}", flush=True)
 
-        image_bytes = np.frombuffer(
-            file.read(),
-            np.uint8
-        )
+    debug_name = f"{uuid.uuid4()}.png"
+    debug_path = os.path.join(DEBUG_DIR, debug_name)
 
-        img = cv2.imdecode(
-            image_bytes,
-            cv2.IMREAD_COLOR
-        )
+    cv2.imwrite(debug_path, cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR))
 
-        if img is None:
+    print(f"DEBUG IMAGE SAVED: {debug_path}", flush=True)
 
-            return jsonify({
-                "success": False,
-                "error": "Invalid image"
-            }), 400
+    # =========================
+    # TEAM KILLS
+    # =========================
 
-        h, w = img.shape[:2]
+    kills_crop = image_np[
+        int(h * 0.28):int(h * 0.42),
+        int(w * 0.36):int(w * 0.48)
+    ]
 
-        print(f"IMAGE SIZE {w}x{h}")
+    kills_result = reader.readtext(kills_crop, detail=0)
 
-        # =================================================
-        # PLACEMENT
-        # =================================================
+    print("KILLS OCR:", kills_result, flush=True)
 
-        placement_crop = img[
-            int(h * 0.08):int(h * 0.20),
-            int(w * 0.38):int(w * 0.62)
-        ]
+    squad_kills = 0
 
-        placement_small = cv2.resize(
-            placement_crop,
-            (0, 0),
-            fx=0.5,
-            fy=0.5
-        )
+    for txt in kills_result:
+        digits = ''.join(filter(str.isdigit, txt))
 
-        placement_text = read_text(
-            placement_small
-        )
+        if digits.isdigit():
+            value = int(digits)
 
-        print("PLACEMENT TEXT:", placement_text)
+            if value < 200:
+                squad_kills = value
+                break
 
-        placement = 0
+    # =========================
+    # PLACEMENT
+    # =========================
 
-        placement_match = re.search(
-            r'(\d+)',
-            placement_text
-        )
+    placement_crop = image_np[
+        int(h * 0.08):int(h * 0.24),
+        int(w * 0.34):int(w * 0.54)
+    ]
 
-        if placement_match:
+    placement_result = reader.readtext(placement_crop, detail=0)
 
-            placement = int(
-                placement_match.group(1)
-            )
+    print("PLACEMENT OCR:", placement_result, flush=True)
 
-        # =================================================
-        # TEAM KILLS
-        # =================================================
+    placement = 0
 
-        kills_crop = img[
-            int(h * 0.23):int(h * 0.37),
-            int(w * 0.23):int(w * 0.40)
-        ]
+    for txt in placement_result:
+        digits = ''.join(filter(str.isdigit, txt))
 
-        kills_small = cv2.resize(
-            kills_crop,
-            (0, 0),
-            fx=0.5,
-            fy=0.5
-        )
+        if digits.isdigit():
+            placement = int(digits)
+            break
 
-        squad_kills = read_number(
-            kills_small
-        )
+    # =========================
+    # PLAYERS
+    # =========================
 
-        print("SQUAD KILLS:", squad_kills)
+    players = []
 
-        # =================================================
-        # PLAYERS
-        # =================================================
+    player_boxes = [
+        [0.08, 0.58, 0.24, 0.82],
+        [0.25, 0.58, 0.41, 0.82],
+        [0.42, 0.58, 0.58, 0.82],
+        [0.59, 0.58, 0.75, 0.82]
+    ]
 
-        players = []
+    for i, box in enumerate(player_boxes):
 
-        player_zones = [
+        x1 = int(w * box[0])
+        y1 = int(h * box[1])
 
-            (
-                int(w * 0.01),
-                int(h * 0.56),
-                int(w * 0.24),
-                int(h * 0.78)
-            ),
+        x2 = int(w * box[2])
+        y2 = int(h * box[3])
 
-            (
-                int(w * 0.24),
-                int(h * 0.56),
-                int(w * 0.49),
-                int(h * 0.78)
-            ),
+        crop = image_np[y1:y2, x1:x2]
 
-            (
-                int(w * 0.48),
-                int(h * 0.56),
-                int(w * 0.73),
-                int(h * 0.78)
-            ),
+        result = reader.readtext(crop, detail=0)
 
-            (
-                int(w * 0.72),
-                int(h * 0.56),
-                int(w * 0.98),
-                int(h * 0.78)
-            )
+        print(f"\nPLAYER {i+1}", flush=True)
+        print(result, flush=True)
 
-        ]
+        pseudo = "UNKNOWN"
+        kills = 0
 
-        # =================================================
-        # DEBUG RECTANGLES
-        # =================================================
+        for txt in result:
 
-        debug_img = img.copy()
+            clean = txt.strip()
 
-        for zone in player_zones:
+            # Ignore niveaux
+            if clean.isdigit() and int(clean) > 50:
+                continue
 
-            x1, y1, x2, y2 = zone
+            # Pseudo probable
+            if len(clean) >= 4 and any(c.isalpha() for c in clean):
+                pseudo = clean.replace(" ", "")
+                break
 
-            cv2.rectangle(
-                debug_img,
-                (x1, y1),
-                (x2, y2),
-                (0, 255, 0),
-                4
-            )
+        for txt in result:
 
-        cv2.imwrite(
-            "/tmp/debug_players.jpg",
-            debug_img
-        )
+            digits = ''.join(filter(str.isdigit, txt))
 
-        print("DEBUG IMAGE SAVED")
-        print(player_zones)
+            if digits.isdigit():
 
-        # =================================================
-        # PLAYER OCR
-        # =================================================
+                val = int(digits)
 
-        for index, zone in enumerate(player_zones):
-
-            print(f"PLAYER {index + 1}")
-
-            x1, y1, x2, y2 = zone
-
-            crop = img[y1:y2, x1:x2]
-
-            small = cv2.resize(
-                crop,
-                (0, 0),
-                fx=0.5,
-                fy=0.5
-            )
-
-            results = reader.readtext(
-                small,
-                detail=0,
-                paragraph=False,
-                batch_size=1
-            )
-
-            print(results)
-
-            pseudo = "UNKNOWN"
-
-            kills = 0
-
-            # =============================================
-            # PSEUDO
-            # =============================================
-
-            for text in results:
-
-                clean = re.sub(
-                    r'[^A-Za-z0-9_\-]',
-                    '',
-                    text
-                )
-
-                if len(clean) >= 3 and clean.lower() != "vous":
-
-                    pseudo = clean
+                if val <= 50:
+                    kills = val
                     break
 
-            # =============================================
-            # KILLS
-            # =============================================
+        players.append({
+            "pseudo": pseudo,
+            "kills": kills,
+            "deaths": 0,
+            "kd": 0,
+            "score": 0
+        })
 
-            for text in results:
+    response = {
+        "success": True,
+        "placement": placement,
+        "squad_kills": squad_kills,
+        "players": players
+    }
 
-                nums = re.findall(
-                    r'\d+',
-                    text
-                )
+    print("\nFINAL RESPONSE", flush=True)
+    print(response, flush=True)
 
-                if nums:
+    return jsonify(response)
 
-                    value = int(nums[0])
-
-                    if value <= 50:
-
-                        kills = value
-                        break
-
-            players.append({
-
-                "pseudo": pseudo,
-                "kills": kills,
-                "deaths": 0,
-                "kd": 0,
-                "score": 0
-
-            })
-
-        # =================================================
-        # RESPONSE
-        # =================================================
-
-        response = {
-
-            "success": True,
-
-            "placement": placement,
-
-            "squad_kills": squad_kills,
-
-            "players": players
-
-        }
-
-        print(response)
-
-        return jsonify(response)
-
-    except Exception as e:
-
-        print("OCR ERROR:", str(e))
-
-        return jsonify({
-
-            "success": False,
-            "error": str(e)
-
-        }), 500
-
-# =====================================================
-# START
-# =====================================================
-
-if __name__ == '__main__':
-
-    app.run(
-        host='0.0.0.0',
-        port=7860,
-        debug=True
-    )
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=7860, debug=True)
