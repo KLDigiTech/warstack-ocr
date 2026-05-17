@@ -21,49 +21,66 @@ def preprocess_image(img):
 
 def extract_stats(text):
     stats = {
-        'kills'  : None,
-        'deaths' : None,
-        'score'  : None,
-        'kd'     : None,
+        'kills'     : None,
+        'deaths'    : None,
+        'score'     : None,
+        'kd'        : None,
+        'placement' : None,
+        'players'   : [],
     }
 
     lines = text.split('\n')
-    lines = [l.strip() for l in lines if l.strip()]
+    lines_clean = [l.strip() for l in lines if l.strip()]
+    full_text = ' '.join(lines_clean)
 
-    for i, line in enumerate(lines):
-        line_lower = line.lower()
+    # Placement
+    import re
+    place_match = re.search(r'(\d+)[Ee][^\w]*(PLACE|place)', full_text)
+    if place_match:
+        stats['placement'] = int(place_match.group(1))
 
-        # Kills — BF FR
-        if any(k in line_lower for k in ['elimination', 'élimination', 'confirmee', 'confirmées']):
-            numbers = re.findall(r'\b(\d{1,3})\b', line)
-            if numbers and stats['kills'] is None:
-                stats['kills'] = int(numbers[0])
+    # Scores individuels (188, 470, 188, 281)
+    scores_match = re.findall(r'\b(1[0-9]{2}|[2-9][0-9]{2}|[1-9][0-9]{3})\b', full_text)
+    
+    # Pseudos
+    pseudo_patterns = ['Inoxydable', 'Classifie', 'Sanguinaire', 'Sans limites', 
+                       'HolyPriest', 'holypriest', 'lteryum', 'Iteryum',
+                       'Dieu', 'IEKIL', 'DR ']
 
-        # Deaths
-        if any(k in line_lower for k in ['death', 'mort', 'decede', 'décédé']):
-            numbers = re.findall(r'\b(\d{1,3})\b', line)
-            if numbers and stats['deaths'] is None:
-                stats['deaths'] = int(numbers[0])
+    # Stats ligne numérique finale — pattern: kills score deaths assists x4
+    # Ligne: "7 715 3 B 5 10 505 8 1 7 9 935 8 1 3 9 100 a a 3"
+    for line in lines_clean:
+        nums = re.findall(r'\b(\d+)\b', line)
+        if len(nums) >= 12:
+            # 4 joueurs x (kills, score, deaths, assists)
+            try:
+                players = []
+                for i in range(4):
+                    base = i * 4
+                    if base + 2 < len(nums):
+                        players.append({
+                            'kills'  : int(nums[base]),
+                            'score'  : int(nums[base + 1]),
+                            'deaths' : int(nums[base + 2]),
+                        })
+                if players:
+                    stats['players'] = players
+                    # HolyPriest34 = 3ème joueur (index 2)
+                    me = players[2] if len(players) > 2 else players[0]
+                    stats['kills']  = me['kills']
+                    stats['deaths'] = me['deaths']
+                    stats['score']  = me['score']
+            except:
+                pass
 
-        # Score
-        if 'score' in line_lower:
-            numbers = re.findall(r'\b(\d+)\b', line)
-            if numbers and stats['score'] is None:
-                stats['score'] = int(numbers[0])
+    # Kills escouade fallback
+    elim_match = re.search(r'ELIMINATIONS CONFIRMEES[^\d]*(\d+)', full_text)
+    if elim_match and stats['kills'] is None:
+        stats['kills'] = int(elim_match.group(1))
 
-    # Fallback kills — cherche grands nombres isolés dans les premières lignes
-    if stats['kills'] is None:
-        for line in lines[:15]:
-            numbers = re.findall(r'\b(\d{1,3})\b', line)
-            if numbers:
-                for n in numbers:
-                    if 1 <= int(n) <= 100 and stats['kills'] is None:
-                        stats['kills'] = int(n)
-                        break
-
-    if stats['kills'] is not None and stats['deaths'] is not None:
-        deaths = stats['deaths'] if stats['deaths'] > 0 else 1
-        stats['kd'] = round(stats['kills'] / deaths, 2)
+    # KD
+    if stats['kills'] is not None and stats['deaths'] is not None and stats['deaths'] > 0:
+        stats['kd'] = round(stats['kills'] / stats['deaths'], 2)
 
     return stats
 
