@@ -100,14 +100,17 @@ def read_number(img):
 
     if nums:
 
-        # prend le plus petit nombre
-        # évite les gros scores fusionnés
-
         values = [int(n) for n in nums]
 
-        values.sort()
+        valid = []
 
-        return values[0]
+        for v in values:
+
+            if v <= 100:
+                valid.append(v)
+
+        if valid:
+            return max(valid)
 
     return 0
 
@@ -179,8 +182,8 @@ def ocr():
         # =================================================
 
         kills_zone = img[
-            int(h * 0.33):int(h * 0.43),
-            int(w * 0.34):int(w * 0.44)
+            int(h * 0.29):int(h * 0.38),
+            int(w * 0.28):int(w * 0.39)
         ]
 
         squad_kills = read_number(
