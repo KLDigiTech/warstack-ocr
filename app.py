@@ -20,15 +20,10 @@ def preprocess_image(img):
     return thresh
 
 def extract_stats(text):
-    import re
-
     stats = {
-        'kills'     : None,
-        'deaths'    : None,
-        'score'     : None,
-        'kd'        : None,
-        'placement' : None,
-        'players'   : [],
+        'placement'  : None,
+        'squad_kills': None,
+        'players'    : [],
     }
 
     lines = text.split('\n')
@@ -40,48 +35,49 @@ def extract_stats(text):
     if place_match:
         stats['placement'] = int(place_match.group(1))
 
-    # Ligne des pseudos + scores (ex: "Inoxydable 188 Classifie 470 Sanguinaire 188 Sans limites 281")
-    pseudo_score_pattern = re.findall(r'([A-Za-z][A-Za-z0-9_\- ]{2,20}?)\s+(\d{3,4})', full_text)
-    players_raw = [(p.strip(), int(s)) for p, s in pseudo_score_pattern if 100 <= int(s) <= 9999]
+    # Kills escouade
+    elim_match = re.search(r'ELIMINATIONS CONFIRMEES\D*(\d+)', full_text)
+    if elim_match:
+        stats['squad_kills'] = int(elim_match.group(1))
 
-    # Ligne de stats numériques (kills score deaths assists x4)
-    stats_line = None
+    # Ligne stats numériques — kills score deaths assists x4
+    # Ex: "7 715 3 5 10 505 8 1 9 935 8 1 9 100 2 3"
+    stats_nums = None
     for line in lines_clean:
         nums = re.findall(r'\b(\d+)\b', line)
         if len(nums) >= 12:
-            stats_line = nums
+            stats_nums = [int(n) for n in nums]
             break
 
+    # Pseudos — ligne avec noms joueurs
+    # Ex: "Inoxydable 188 Classifie 470 Sanguinaire 188 Sans limites 281"
+    pseudo_scores = []
+    for line in lines_clean:
+        # Cherche pattern: mot(s) suivi d'un nombre 3-4 chiffres, répété
+        matches = re.findall(r'([A-Za-z][A-Za-z0-9_ ]{1,20}?)\s+(\d{3,4})\b', line)
+        if len(matches) >= 3:
+            pseudo_scores = [(m[0].strip(), int(m[1])) for m in matches[:4]]
+            break
+
+    # Construit les 4 joueurs
     players = []
-    if stats_line:
+    if stats_nums:
         for i in range(4):
             base = i * 4
-            if base + 2 < len(stats_line):
+            if base + 2 < len(stats_nums):
+                pseudo = pseudo_scores[i][0] if i < len(pseudo_scores) else f'Joueur {i+1}'
+                score  = pseudo_scores[i][1] if i < len(pseudo_scores) else stats_nums[base + 1]
+                kills  = stats_nums[base]
+                deaths = stats_nums[base + 2]
                 players.append({
-                    'kills'  : int(stats_line[base]),
-                    'score'  : int(stats_line[base + 1]),
-                    'deaths' : int(stats_line[base + 2]),
+                    'pseudo' : pseudo,
+                    'kills'  : kills,
+                    'score'  : score,
+                    'deaths' : deaths,
+                    'kd'     : round(kills / max(deaths, 1), 2)
                 })
 
-    # Associe pseudos + stats par position
-    result_players = []
-    for i, player in enumerate(players):
-        pseudo = players_raw[i][0] if i < len(players_raw) else f'Joueur {i+1}'
-        result_players.append({
-            'pseudo' : pseudo,
-            'kills'  : player['kills'],
-            'score'  : player['score'],
-            'deaths' : player['deaths'],
-            'kd'     : round(player['kills'] / max(player['deaths'], 1), 2)
-        })
-
-    stats['players'] = result_players
-
-    # Stats escouade globales
-    elim_match = re.search(r'ELIMINATIONS CONFIRMEES\D*(\d+)', full_text)
-    if elim_match:
-        stats['kills'] = int(elim_match.group(1))
-
+    stats['players'] = players
     return stats
 
 def load_image_from_url(url):
