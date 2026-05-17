@@ -20,6 +20,8 @@ def preprocess_image(img):
     return thresh
 
 def extract_stats(text):
+    import re
+
     stats = {
         'kills'     : None,
         'deaths'    : None,
@@ -34,53 +36,51 @@ def extract_stats(text):
     full_text = ' '.join(lines_clean)
 
     # Placement
-    import re
-    place_match = re.search(r'(\d+)[Ee][^\w]*(PLACE|place)', full_text)
+    place_match = re.search(r'(\d+)[Ee]\s*PLACE', full_text, re.IGNORECASE)
     if place_match:
         stats['placement'] = int(place_match.group(1))
 
-    # Scores individuels (188, 470, 188, 281)
-    scores_match = re.findall(r'\b(1[0-9]{2}|[2-9][0-9]{2}|[1-9][0-9]{3})\b', full_text)
-    
-    # Pseudos
-    pseudo_patterns = ['Inoxydable', 'Classifie', 'Sanguinaire', 'Sans limites', 
-                       'HolyPriest', 'holypriest', 'lteryum', 'Iteryum',
-                       'Dieu', 'IEKIL', 'DR ']
+    # Ligne des pseudos + scores (ex: "Inoxydable 188 Classifie 470 Sanguinaire 188 Sans limites 281")
+    pseudo_score_pattern = re.findall(r'([A-Za-z][A-Za-z0-9_\- ]{2,20}?)\s+(\d{3,4})', full_text)
+    players_raw = [(p.strip(), int(s)) for p, s in pseudo_score_pattern if 100 <= int(s) <= 9999]
 
-    # Stats ligne numérique finale — pattern: kills score deaths assists x4
-    # Ligne: "7 715 3 B 5 10 505 8 1 7 9 935 8 1 3 9 100 a a 3"
+    # Ligne de stats numériques (kills score deaths assists x4)
+    stats_line = None
     for line in lines_clean:
         nums = re.findall(r'\b(\d+)\b', line)
         if len(nums) >= 12:
-            # 4 joueurs x (kills, score, deaths, assists)
-            try:
-                players = []
-                for i in range(4):
-                    base = i * 4
-                    if base + 2 < len(nums):
-                        players.append({
-                            'kills'  : int(nums[base]),
-                            'score'  : int(nums[base + 1]),
-                            'deaths' : int(nums[base + 2]),
-                        })
-                if players:
-                    stats['players'] = players
-                    # HolyPriest34 = 3ème joueur (index 2)
-                    me = players[2] if len(players) > 2 else players[0]
-                    stats['kills']  = me['kills']
-                    stats['deaths'] = me['deaths']
-                    stats['score']  = me['score']
-            except:
-                pass
+            stats_line = nums
+            break
 
-    # Kills escouade fallback
-    elim_match = re.search(r'ELIMINATIONS CONFIRMEES[^\d]*(\d+)', full_text)
-    if elim_match and stats['kills'] is None:
+    players = []
+    if stats_line:
+        for i in range(4):
+            base = i * 4
+            if base + 2 < len(stats_line):
+                players.append({
+                    'kills'  : int(stats_line[base]),
+                    'score'  : int(stats_line[base + 1]),
+                    'deaths' : int(stats_line[base + 2]),
+                })
+
+    # Associe pseudos + stats par position
+    result_players = []
+    for i, player in enumerate(players):
+        pseudo = players_raw[i][0] if i < len(players_raw) else f'Joueur {i+1}'
+        result_players.append({
+            'pseudo' : pseudo,
+            'kills'  : player['kills'],
+            'score'  : player['score'],
+            'deaths' : player['deaths'],
+            'kd'     : round(player['kills'] / max(player['deaths'], 1), 2)
+        })
+
+    stats['players'] = result_players
+
+    # Stats escouade globales
+    elim_match = re.search(r'ELIMINATIONS CONFIRMEES\D*(\d+)', full_text)
+    if elim_match:
         stats['kills'] = int(elim_match.group(1))
-
-    # KD
-    if stats['kills'] is not None and stats['deaths'] is not None and stats['deaths'] > 0:
-        stats['kd'] = round(stats['kills'] / stats['deaths'], 2)
 
     return stats
 
