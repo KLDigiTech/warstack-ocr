@@ -218,9 +218,12 @@ def ocr():
             )
 
         cv2.imwrite(
-            "debug_players.jpg",
+            "/tmp/debug_players.jpg",
             debug_img
         )
+
+        print("DEBUG IMAGE SAVED")
+        print(player_zones)
 
         # =================================================
         # PLAYER OCR
