@@ -8,10 +8,14 @@ import re
 app = Flask(__name__)
 CORS(app)
 
+# =====================================================
+# EASYOCR
+# =====================================================
+
 reader = easyocr.Reader(['en'], gpu=False)
 
 # =====================================================
-# PREPROCESS
+# PREPROCESS IMAGE
 # =====================================================
 
 def preprocess_image(img):
@@ -40,7 +44,7 @@ def preprocess_image(img):
     return thresh
 
 # =====================================================
-# OCR
+# OCR TEXT EXTRACTION
 # =====================================================
 
 def extract_text(image):
@@ -55,12 +59,13 @@ def extract_text(image):
         confidence = result[2]
 
         if confidence > 0.25:
+
             texts.append(text)
 
     return texts
 
 # =====================================================
-# PARSE
+# PARSE SCOREBOARD
 # =====================================================
 
 def parse_scoreboard(texts):
@@ -70,22 +75,23 @@ def parse_scoreboard(texts):
     placement = None
     squad_kills = None
 
-    # =========================
+    # =================================================
     # PLACEMENT
-    # =========================
+    # =================================================
 
     placement_match = re.search(
-        r'(\d+)\s*(PLACE|PLACEMENT)',
+        r'(\d+)\s*(PLACE|PLACEMENT|PLACEMENT DE LESCOUADE)',
         full_text,
         re.IGNORECASE
     )
 
     if placement_match:
+
         placement = int(placement_match.group(1))
 
-    # =========================
-    # KILLS
-    # =========================
+    # =================================================
+    # KILLS ESCOUADE
+    # =================================================
 
     big_numbers = re.findall(r'\b\d+\b', full_text)
 
@@ -99,11 +105,18 @@ def parse_scoreboard(texts):
         ]
 
         if filtered:
-            squad_kills = max(filtered)
 
-    # =========================
+            filtered.sort()
+
+            squad_kills = (
+                filtered[-2]
+                if len(filtered) > 1
+                else filtered[0]
+            )
+
+    # =================================================
     # PLAYERS
-    # =========================
+    # =================================================
 
     players = []
 
@@ -111,9 +124,30 @@ def parse_scoreboard(texts):
         r'^[A-Za-z0-9_\-\[\]]{3,24}$'
     )
 
+    ignored_words = [
+        'resultat',
+        'vous',
+        'placement',
+        'progression',
+        'escouade',
+        'score',
+        'kills'
+    ]
+
     for i, text in enumerate(texts):
 
         clean = text.strip()
+
+        # =========================
+        # IGNORE UI WORDS
+        # =========================
+
+        if clean.lower() in ignored_words:
+            continue
+
+        # =========================
+        # DETECT PSEUDO
+        # =========================
 
         if pseudo_regex.match(clean):
 
@@ -124,14 +158,36 @@ def parse_scoreboard(texts):
                 nums = re.findall(r'\d+', texts[j])
 
                 for n in nums:
+
                     stats.append(int(n))
 
             player = {
+
                 "pseudo": clean,
-                "kills": stats[0] if len(stats) > 0 else 0,
-                "deaths": stats[1] if len(stats) > 1 else 0,
-                "score": stats[2] if len(stats) > 2 else 0,
+
+                "kills": (
+                    stats[0]
+                    if len(stats) > 0
+                    else 0
+                ),
+
+                "deaths": (
+                    stats[1]
+                    if len(stats) > 1
+                    else 0
+                ),
+
+                "score": (
+                    stats[2]
+                    if len(stats) > 2
+                    else 0
+                )
+
             }
+
+            # =====================
+            # KD
+            # =====================
 
             if player["deaths"] > 0:
 
@@ -146,18 +202,32 @@ def parse_scoreboard(texts):
 
             players.append(player)
 
+    # =================================================
+    # LIMIT PLAYERS
+    # =================================================
+
     players = players[:4]
 
+    # =================================================
+    # RETURN JSON
+    # =================================================
+
     return {
+
         "success": True,
+
         "placement": placement,
+
         "squad_kills": squad_kills,
+
         "players": players,
+
         "raw_text": texts
+
     }
 
 # =====================================================
-# ROUTE OCR
+# OCR ROUTE
 # =====================================================
 
 @app.route('/ocr', methods=['POST'])
@@ -165,14 +235,24 @@ def ocr():
 
     try:
 
+        # =============================================
+        # CHECK FILE
+        # =============================================
+
         if 'image' not in request.files:
 
             return jsonify({
+
                 "success": False,
                 "error": "Aucune image"
+
             }), 400
 
         file = request.files['image']
+
+        # =============================================
+        # READ IMAGE
+        # =============================================
 
         image_bytes = np.frombuffer(
             file.read(),
@@ -187,13 +267,15 @@ def ocr():
         if img is None:
 
             return jsonify({
+
                 "success": False,
                 "error": "Image invalide"
+
             }), 400
 
-        # =========================
-        # ZONES
-        # =========================
+        # =============================================
+        # IMAGE ZONES
+        # =============================================
 
         h, w = img.shape[:2]
 
@@ -207,9 +289,9 @@ def ocr():
             0:w
         ]
 
-        # =========================
+        # =============================================
         # PREPROCESS
-        # =========================
+        # =============================================
 
         placement_processed = preprocess_image(
             placement_zone
@@ -219,9 +301,9 @@ def ocr():
             players_zone
         )
 
-        # =========================
+        # =============================================
         # OCR
-        # =========================
+        # =============================================
 
         placement_texts = extract_text(
             placement_processed
@@ -231,21 +313,30 @@ def ocr():
             players_processed
         )
 
-        all_texts = placement_texts + players_texts
+        all_texts = (
+            placement_texts +
+            players_texts
+        )
 
-        # =========================
+        # =============================================
         # PARSE
-        # =========================
+        # =============================================
 
-        result = parse_scoreboard(all_texts)
+        result = parse_scoreboard(
+            all_texts
+        )
 
         return jsonify(result)
 
     except Exception as e:
 
+        print(e)
+
         return jsonify({
+
             "success": False,
             "error": str(e)
+
         }), 500
 
 # =====================================================
@@ -255,7 +346,7 @@ def ocr():
 if __name__ == '__main__':
 
     app.run(
-    host='0.0.0.0',
-    port=7860,
-    debug=True
-)
+        host='0.0.0.0',
+        port=7860,
+        debug=True
+    )
