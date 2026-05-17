@@ -3,7 +3,6 @@ from PIL import Image
 import easyocr
 import numpy as np
 import os
-import uuid
 
 app = Flask(__name__)
 
@@ -14,39 +13,61 @@ os.makedirs(DEBUG_DIR, exist_ok=True)
 
 
 # =========================================================
-# OCR HELPERS
+# HELPERS
 # =========================================================
 
 def crop(img, x1, y1, x2, y2):
     return img.crop((x1, y1, x2, y2))
 
 
-def save_crop(crop_img, name):
+def save_crop(img, name):
     path = os.path.join(DEBUG_DIR, f"{name}.png")
-    crop_img.save(path)
-    print(f"DEBUG SAVED: {path}")
+    img.save(path)
+    print("DEBUG SAVED:", path)
 
 
 def ocr_text(img):
     arr = np.array(img)
-    result = reader.readtext(arr, detail=0, paragraph=False)
-    return result
+    return reader.readtext(arr, detail=0, paragraph=False)
 
 
 def clean_text(lines):
-    return " ".join(lines).strip()
+
+    if not lines:
+        return ""
+
+    text = " ".join(lines)
+
+    replacements = {
+        "|": "",
+        "[": "",
+        "]": "",
+        "{": "",
+        "}": "",
+        "(": "",
+        ")": "",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    return text.strip()
 
 
 def extract_number(lines):
+
     for line in lines:
+
         digits = ''.join(c for c in line if c.isdigit())
+
         if digits:
             return int(digits)
+
     return 0
 
 
 # =========================================================
-# ROUTE
+# OCR ROUTE
 # =========================================================
 
 @app.route("/ocr", methods=["POST"])
@@ -58,13 +79,13 @@ def ocr():
         print("WARSTACK OCR START")
         print("======================")
 
-        if 'image' not in request.files:
+        if "image" not in request.files:
             return jsonify({
                 "success": False,
-                "error": "No image"
+                "error": "No image uploaded"
             })
 
-        file = request.files['image']
+        file = request.files["image"]
 
         image = Image.open(file.stream).convert("RGB")
 
@@ -93,15 +114,17 @@ def ocr():
         placement = 0
 
         for line in placement_lines:
-            if "1E" in line or "1ER" in line or "1EPLACE" in line:
+
+            upper = line.upper()
+
+            if "1E" in upper or "1ER" in upper:
                 placement = 1
-                break
 
         # =====================================================
         # TEAM KILLS
         # =====================================================
 
-        team_kills_crop = crop(
+        kills_crop = crop(
             image,
             int(width * 0.34),
             int(height * 0.30),
@@ -109,42 +132,61 @@ def ocr():
             int(height * 0.45)
         )
 
-        save_crop(team_kills_crop, "team_kills")
+        save_crop(kills_crop, "team_kills")
 
-        team_kills_lines = ocr_text(team_kills_crop)
+        kills_lines = ocr_text(kills_crop)
 
-        print("TEAM KILLS OCR:", team_kills_lines)
+        print("TEAM KILLS OCR:", kills_lines)
 
-        squad_kills = extract_number(team_kills_lines)
+        squad_kills = extract_number(kills_lines)
 
         # =====================================================
         # PLAYERS
         # =====================================================
 
         player_zones = [
+
             {
                 "name": "player1",
-                "pseudo": (0.11, 0.61, 0.24, 0.69),
-                "kills": (0.18, 0.82, 0.21, 0.90),
-                "deaths": (0.22, 0.82, 0.25, 0.90)
+
+                # PSEUDO
+                "pseudo": (0.09, 0.58, 0.22, 0.64),
+
+                # KILLS
+                "kills": (0.16, 0.79, 0.19, 0.87),
+
+                # DEATHS
+                "deaths": (0.20, 0.79, 0.23, 0.87)
             },
+
             {
                 "name": "player2",
-                "pseudo": (0.31, 0.61, 0.44, 0.69),
-                "kills": (0.38, 0.82, 0.41, 0.90),
-                "deaths": (0.42, 0.82, 0.45, 0.90)
+
+                "pseudo": (0.29, 0.58, 0.42, 0.64),
+
+                "kills": (0.36, 0.79, 0.39, 0.87),
+
+                "deaths": (0.40, 0.79, 0.43, 0.87)
             },
+
             {
                 "name": "player3",
-                "pseudo": (0.52, 0.61, 0.65, 0.69),
-                "kills": (0.59, 0.82, 0.62, 0.90),
-                "deaths": (0.63, 0.82, 0.66, 0.90)
+
+                "pseudo": (0.50, 0.58, 0.63, 0.64),
+
+                "kills": (0.57, 0.79, 0.60, 0.87),
+
+                "deaths": (0.61, 0.79, 0.64, 0.87)
             },
+
             {
                 "name": "player4",
-                "pseudo": (0.72, 0.61, 0.85, 0.69),
-                "kills": (0.79, 0.82, 0.82, 0.90),
-                "deaths": (0.83, 0.82, 0.86, 0.90)
+
+                "pseudo": (0.71, 0.58, 0.84, 0.64),
+
+                "kills": (0.78, 0.79, 0.81, 0.87),
+
+                "deaths": (0.82, 0.79, 0.85, 0.87)
             }
         ]
 
@@ -152,9 +194,9 @@ def ocr():
 
         for zone in player_zones:
 
-            # =========================================
+            # =====================================
             # PSEUDO
-            # =========================================
+            # =====================================
 
             px1 = int(width * zone["pseudo"][0])
             py1 = int(height * zone["pseudo"][1])
@@ -167,32 +209,32 @@ def ocr():
 
             pseudo_lines = ocr_text(pseudo_crop)
 
-            print(f"{zone['name']} pseudo OCR:", pseudo_lines)
+            print(f"{zone['name']} PSEUDO OCR:", pseudo_lines)
 
             pseudo = clean_text(pseudo_lines)
 
-            # =========================================
+            # =====================================
             # KILLS
-            # =========================================
+            # =====================================
 
             kx1 = int(width * zone["kills"][0])
             ky1 = int(height * zone["kills"][1])
             kx2 = int(width * zone["kills"][2])
             ky2 = int(height * zone["kills"][3])
 
-            kills_crop = crop(image, kx1, ky1, kx2, ky2)
+            player_kills_crop = crop(image, kx1, ky1, kx2, ky2)
 
-            save_crop(kills_crop, f"{zone['name']}_kills")
+            save_crop(player_kills_crop, f"{zone['name']}_kills")
 
-            kills_lines = ocr_text(kills_crop)
+            player_kills_lines = ocr_text(player_kills_crop)
 
-            print(f"{zone['name']} kills OCR:", kills_lines)
+            print(f"{zone['name']} KILLS OCR:", player_kills_lines)
 
-            kills = extract_number(kills_lines)
+            kills = extract_number(player_kills_lines)
 
-            # =========================================
+            # =====================================
             # DEATHS
-            # =========================================
+            # =====================================
 
             dx1 = int(width * zone["deaths"][0])
             dy1 = int(height * zone["deaths"][1])
@@ -205,7 +247,7 @@ def ocr():
 
             deaths_lines = ocr_text(deaths_crop)
 
-            print(f"{zone['name']} deaths OCR:", deaths_lines)
+            print(f"{zone['name']} DEATHS OCR:", deaths_lines)
 
             deaths = extract_number(deaths_lines)
 
@@ -218,7 +260,7 @@ def ocr():
             })
 
         # =====================================================
-        # FINAL
+        # FINAL RESPONSE
         # =====================================================
 
         response = {
@@ -228,7 +270,7 @@ def ocr():
             "players": players
         }
 
-        print("\nFINAL RESPONSE:")
+        print("\nFINAL RESPONSE")
         print(response)
 
         return jsonify(response)
