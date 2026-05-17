@@ -213,7 +213,7 @@ def ocr():
 
         ]
 
-        for index, col in enumerate(player_columns):
+        for col in player_columns:
 
             x1 = int(w * col[0])
             x2 = int(w * col[1])
@@ -233,6 +233,12 @@ def ocr():
 
             pseudo = pseudo.replace(' ', '')
 
+            pseudo = re.sub(
+                r'[^A-Za-z0-9_\-]',
+                '',
+                pseudo
+            )
+
             # =============================================
             # KILLS
             # =============================================
@@ -246,30 +252,6 @@ def ocr():
                 preprocess_numbers(kills_crop)
             )
 
-            # =============================================
-            # DEBUG IMAGES
-            # =============================================
-
-            cv2.imwrite(
-                f"debug_name_{index}.png",
-                name_crop
-            )
-
-            cv2.imwrite(
-                f"debug_kills_{index}.png",
-                kills_crop
-            )
-
-            # =============================================
-            # CLEAN
-            # =============================================
-
-            pseudo = re.sub(
-                r'[^A-Za-z0-9_\-]',
-                '',
-                pseudo
-            )
-
             if len(pseudo) < 3:
                 continue
 
@@ -280,16 +262,13 @@ def ocr():
 
             })
 
-        cv2.imwrite(
-            "debug_teamkills.png",
-            kills_zone
-        )
-
         return jsonify({
 
             "success": True,
 
             "placement": placement,
+
+            "placement_text": placement_text,
 
             "squad_kills": squad_kills,
 
