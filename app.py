@@ -8,17 +8,13 @@ import re
 app = Flask(__name__)
 CORS(app)
 
-# =====================================================
-# EASYOCR
-# =====================================================
-
 reader = easyocr.Reader(['en'], gpu=False)
 
 # =====================================================
-# HELPERS
+# UPSCALE
 # =====================================================
 
-def upscale(img, scale=3):
+def upscale(img, scale=4):
 
     return cv2.resize(
         img,
@@ -34,11 +30,18 @@ def upscale(img, scale=3):
 
 def preprocess_text(img):
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(
+        img,
+        cv2.COLOR_BGR2GRAY
+    )
 
     gray = upscale(gray, 3)
 
-    gray = cv2.GaussianBlur(gray, (3,3), 0)
+    gray = cv2.GaussianBlur(
+        gray,
+        (3,3),
+        0
+    )
 
     return gray
 
@@ -48,13 +51,16 @@ def preprocess_text(img):
 
 def preprocess_numbers(img):
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(
+        img,
+        cv2.COLOR_BGR2GRAY
+    )
 
-    gray = upscale(gray, 4)
+    gray = upscale(gray, 6)
 
     thresh = cv2.threshold(
         gray,
-        170,
+        190,
         255,
         cv2.THRESH_BINARY
     )[1]
@@ -62,7 +68,7 @@ def preprocess_numbers(img):
     return thresh
 
 # =====================================================
-# OCR TEXT
+# READ TEXT
 # =====================================================
 
 def read_text(img):
@@ -72,10 +78,12 @@ def read_text(img):
         detail=0
     )
 
-    return " ".join(results).strip()
+    text = ''.join(results)
+
+    return text.strip()
 
 # =====================================================
-# OCR NUMBER
+# READ NUMBER
 # =====================================================
 
 def read_number(img):
@@ -91,7 +99,15 @@ def read_number(img):
     nums = re.findall(r'\d+', text)
 
     if nums:
-        return int(nums[0])
+
+        # prend le plus petit nombre
+        # évite les gros scores fusionnés
+
+        values = [int(n) for n in nums]
+
+        values.sort()
+
+        return values[0]
 
     return 0
 
@@ -103,10 +119,6 @@ def read_number(img):
 def ocr():
 
     try:
-
-        # =============================================
-        # CHECK IMAGE
-        # =============================================
 
         if 'image' not in request.files:
 
@@ -134,19 +146,15 @@ def ocr():
                 "error": "Invalid image"
             }), 400
 
-        # =============================================
-        # IMAGE SIZE
-        # =============================================
-
         h, w = img.shape[:2]
 
-        # =============================================
+        # =================================================
         # PLACEMENT
-        # =============================================
+        # =================================================
 
         placement_zone = img[
-            int(h * 0.10):int(h * 0.28),
-            int(w * 0.28):int(w * 0.72)
+            int(h * 0.12):int(h * 0.26),
+            int(w * 0.33):int(w * 0.67)
         ]
 
         placement_text = read_text(
@@ -166,106 +174,47 @@ def ocr():
                 placement_match.group(1)
             )
 
-        # =============================================
+        # =================================================
         # TEAM KILLS
-        # =============================================
+        # =================================================
 
         kills_zone = img[
-            int(h * 0.30):int(h * 0.47),
-            int(w * 0.28):int(w * 0.48)
+            int(h * 0.33):int(h * 0.43),
+            int(w * 0.34):int(w * 0.44)
         ]
 
         squad_kills = read_number(
             preprocess_numbers(kills_zone)
         )
 
-        # =============================================
+        # =================================================
         # PLAYERS
-        # =============================================
+        # =================================================
 
         players = []
 
-        player_zones = [
+        player_columns = [
 
-            # PLAYER 1
-            {
-                "name": [
-                    int(h * 0.60),
-                    int(h * 0.68),
-                    int(w * 0.03),
-                    int(w * 0.20)
-                ],
-                "kills": [
-                    int(h * 0.70),
-                    int(h * 0.80),
-                    int(w * 0.08),
-                    int(w * 0.18)
-                ]
-            },
-
-            # PLAYER 2
-            {
-                "name": [
-                    int(h * 0.60),
-                    int(h * 0.68),
-                    int(w * 0.28),
-                    int(w * 0.45)
-                ],
-                "kills": [
-                    int(h * 0.70),
-                    int(h * 0.80),
-                    int(w * 0.32),
-                    int(w * 0.42)
-                ]
-            },
-
-            # PLAYER 3
-            {
-                "name": [
-                    int(h * 0.60),
-                    int(h * 0.68),
-                    int(w * 0.52),
-                    int(w * 0.69)
-                ],
-                "kills": [
-                    int(h * 0.70),
-                    int(h * 0.80),
-                    int(w * 0.56),
-                    int(w * 0.66)
-                ]
-            },
-
-            # PLAYER 4
-            {
-                "name": [
-                    int(h * 0.60),
-                    int(h * 0.68),
-                    int(w * 0.75),
-                    int(w * 0.93)
-                ],
-                "kills": [
-                    int(h * 0.70),
-                    int(h * 0.80),
-                    int(w * 0.79),
-                    int(w * 0.89)
-                ]
-            }
+            [0.05, 0.22],
+            [0.28, 0.45],
+            [0.52, 0.69],
+            [0.75, 0.92]
 
         ]
 
-        # =============================================
-        # OCR PLAYERS
-        # =============================================
+        for col in player_columns:
 
-        for zone in player_zones:
+            x1 = int(w * col[0])
+            x2 = int(w * col[1])
 
-            # =========================================
-            # NAME
-            # =========================================
+            # =============================================
+            # NAME ZONE
+            # =============================================
 
-            y1, y2, x1, x2 = zone["name"]
-
-            name_crop = img[y1:y2, x1:x2]
+            name_crop = img[
+                int(h * 0.60):int(h * 0.67),
+                x1:x2
+            ]
 
             pseudo = read_text(
                 preprocess_text(name_crop)
@@ -273,23 +222,30 @@ def ocr():
 
             pseudo = pseudo.replace(' ', '')
 
-            # =========================================
-            # KILLS
-            # =========================================
+            # =============================================
+            # KILLS ZONE
+            # =============================================
 
-            y1, y2, x1, x2 = zone["kills"]
-
-            kills_crop = img[y1:y2, x1:x2]
+            kills_crop = img[
+                int(h * 0.71):int(h * 0.77),
+                x1 + 40:x1 + 120
+            ]
 
             kills = read_number(
                 preprocess_numbers(kills_crop)
             )
 
-            # =========================================
-            # CLEAN
-            # =========================================
+            # =============================================
+            # CLEAN PSEUDO
+            # =============================================
 
-            if len(pseudo) < 2:
+            pseudo = re.sub(
+                r'[^A-Za-z0-9_\-]',
+                '',
+                pseudo
+            )
+
+            if len(pseudo) < 3:
                 continue
 
             players.append({
@@ -298,10 +254,6 @@ def ocr():
                 "kills": kills
 
             })
-
-        # =============================================
-        # RETURN
-        # =============================================
 
         return jsonify({
 
