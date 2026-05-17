@@ -120,7 +120,7 @@ def read_number(img):
 
 @app.route('/ocr', methods=['POST'])
 def ocr():
-
+    print("NEW OCR VERSION ACTIVE")
     try:
 
         if 'image' not in request.files:
